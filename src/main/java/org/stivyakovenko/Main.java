@@ -112,11 +112,11 @@ public class Main {
         BufferedWriter bw = new BufferedWriter(new FileWriter(args[1]));
         for (long l = 0; l < res.lastKey(); l++) {
             if (!res.containsKey(l)) {
-                bw.write("\n");
+                bw.write(":\n");
                 continue;
             }
             String str = res.get(l);
-            bw.write(str);
+            bw.write(str+"\n");
         }
         bw.close();
     }
