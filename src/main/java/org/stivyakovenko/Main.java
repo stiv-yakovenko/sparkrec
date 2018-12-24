@@ -9,6 +9,7 @@ import org.apache.spark.ml.recommendation.ALSModel;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
+import scala.collection.mutable.WrappedArray;
 
 import java.io.BufferedWriter;
 import java.io.FileWriter;
@@ -25,7 +26,8 @@ public class Main {
         private float rating;
         private long timestamp;
 
-        public Rating() {}
+        public Rating() {
+        }
 
         public Rating(int userId, int movieId, float rating, long timestamp) {
             this.userId = userId;
@@ -79,46 +81,58 @@ public class Main {
 
     static TreeMap<Long, String> res = new TreeMap<>();
 
-    public static void add(long k, String v) {
-        res.put(k, v);
+    public synchronized static void add(Row row) {
+        long l = row.getInt(0);
+        Row[] array = (Row[]) ((WrappedArray) row.get(1)).array();
+        StringBuilder rs = new StringBuilder();
+        for(Row r:array){
+            rs.append(r.get(0)).append(" ");
+        }
+        res.put(l, rs.toString());
     }
 
     public static void main(String[] args) throws IOException {
+        if (args.length == 0) {
+            System.out.println("sparkrec in.txt out.txt numCores numIters tmpDir");
+            return;
+        }
+        System.out.println("Starting spark ALS rec");
         Logger.getLogger("org").setLevel(Level.OFF);
         Logger.getLogger("akka").setLevel(Level.OFF);
         SparkSession spark = SparkSession
                 .builder()
                 .appName("SomeAppName")
-                .config("spark.master", "local")
+                .config("spark.master", "local[" + args[2] + "]")
+                .config("spark.local.dir",args[4])
                 .getOrCreate();
         JavaRDD<Rating> ratingsRDD = spark
                 .read().textFile(args[0]).javaRDD()
                 .map(Rating::parseRating);
         Dataset<Row> ratings = spark.createDataFrame(ratingsRDD, Rating.class);
         ALS als = new ALS()
-                .setMaxIter(1)
+                .setMaxIter(Integer.parseInt(args[3]))
                 .setRegParam(0.01)
                 .setUserCol("userId")
                 .setItemCol("movieId")
-                .setRatingCol("rating");
+                .setRatingCol("rating").setImplicitPrefs(true);
+
         ALSModel model = als.fit(ratings);
         model.setColdStartStrategy("drop");
         Dataset<Row> rowDataset = model.recommendForAllUsers(50);
         rowDataset.foreach((ForeachFunction<Row>) row -> {
-            String str = row.toString();
-            long l = Long.parseLong(str.substring(1).split(",")[0]);
-            add(l, parse(str));
+            add(row);
         });
         BufferedWriter bw = new BufferedWriter(new FileWriter(args[1]));
         for (long l = 0; l < res.lastKey(); l++) {
             if (!res.containsKey(l)) {
-                bw.write(":\n");
+                bw.write("\n");
                 continue;
             }
             String str = res.get(l);
-            bw.write(str+"\n");
+            bw.write(str + "\n");
         }
         bw.close();
+        spark.close();
     }
 }
 
